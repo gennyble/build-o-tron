@@ -636,12 +636,16 @@ impl DbCtx {
     pub fn runs_for_job_one_per_host(&self, job_id: u64) -> Result<Vec<Run>, String> {
         let conn = self.conn.lock().unwrap();
         let mut runs_query = conn.prepare(crate::sql::RUNS_FOR_JOB).unwrap();
-        let mut runs_results = runs_query.query([job_id]).unwrap();
+        let mut runs_ids = runs_query.query([job_id]).unwrap();
 
         let mut results = Vec::new();
 
-        while let Some(row) = runs_results.next().unwrap() {
-            results.push(Self::row2run(row));
+        let mut run_fields_query = conn.prepare(crate::sql::RUN_TO_FIELDS).unwrap();
+
+        while let Some(row_id) = runs_ids.next().unwrap() {
+            let id: u32 = row_id.get(0usize).unwrap();
+            let mut run = run_fields_query.query_row([id], |row| Ok(Self::row2run(row))).unwrap();
+            results.push(run);
         }
 
         Ok(results)

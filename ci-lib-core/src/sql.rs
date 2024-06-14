@@ -349,7 +349,39 @@ pub const LAST_RUN_FOR_JOB: &'static str = "\
         build_result,
         final_status from runs where job_id=?1 order by started_time desc limit 1;";
 
+// HELLO READER, I DO NOT UNDERSTAND SQL WELL ENOUGH, THIS MAY NOT WORK CORRECTLY!
+// the intent of this query is to select one run per host that has run a job. which makes for an
+// important question: which run should be representative of runs on a host? my somewhat arbitrary
+// choice is "the most recent". this seems like a least-bad option: if a job has been re-run and is
+// in progress, that in-progress one ought to be at least indicated. if the job has been re-run and
+// that later run is complete, it is either substantially simpler to a previous run (since it would
+// have the same commit, same goodfile, etc), or reflects the most recent intent of the CI runner
+// environment (did a runner bug get fixed? flake of network, disk, something else being retried?).
+// if it does *not* reflect the most recent intent, whatever is wrong can be fixed and retried
+// again.
+//
+// so, do not consider the state of a job: the most recent one is the one to be shown. if data is
+// present for a previous run and should be shown in a "imminently replaced" capacity, that's a
+// problem for future me.
+//
+// ok, now with all that said, this once upon a time relied on a sqlite quirk allowing
+// non-aggregate expressions that do not appear in the query's `group by`. sqlite even happened to do the thing i want in that circumstance - the query looked something like:
+//  ```
+//  select max(id), job_id, host_id, completed_time from runs where job_id=?1 group_by host_id;
+//  ```
+//  where `max(id)` collapses the group to one of the rows with max `id`. since `id` is distinct
+//  this happens to collapse the group to one row, which as the desired fields for each subsequent
+//  expression in the `select`.
+//
+//  this query is simply not allowed in many other database engines (exception MySQL). it was too
+//  difficult to figure out why this works right (or if this is subtly wrong), so i've changed the
+//  query this more portable form that is more obviously correct: only select aggregations or
+//  non-aggregations that are part of `group by`. so only select `id` and `host_id`, subsequent
+//  fields for each row have to be selected later on-demand.
 pub const RUNS_FOR_JOB: &'static str = "\
+    select max(id) from runs where job_id=?1 group by host_id;";
+
+pub const RUN_TO_FIELDS: &'static str = "\
     select id,
         job_id,
         artifacts_path,
@@ -361,7 +393,7 @@ pub const RUNS_FOR_JOB: &'static str = "\
         complete_time,
         run_timeout,
         build_result,
-        final_status from runs where job_id=?1 group by host_id order by started_time desc, state asc;";
+        final_status from runs where id=?1;";
 
 pub const SELECT_ALL_RUNS_WITH_JOB_INFO: &'static str = "\
     select jobs.id as job_id, runs.id as run_id, runs.state, runs.created_time, jobs.commit_id, jobs.run_preferences
