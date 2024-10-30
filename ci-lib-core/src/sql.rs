@@ -245,6 +245,7 @@ pub const CREATE_RUNS_TABLE: &'static str = "\
         job_id INTEGER,
         artifacts_path TEXT,
         state INTEGER NOT NULL,
+        host_preference INTEGER,
         host_id INTEGER,
         build_token TEXT,
         created_time INTEGER,
