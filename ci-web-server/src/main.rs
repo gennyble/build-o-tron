@@ -4,6 +4,7 @@
 
 use chrono::{Utc, TimeZone};
 use lazy_static::lazy_static;
+use std::sync::OnceLock;
 use std::sync::RwLock;
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
@@ -48,6 +49,7 @@ struct WebserverConfig {
     db_path: PathBuf,
     debug_addr: Option<serde_json::Value>,
     server_addr: Option<serde_json::Value>,
+    server_host: String 
 }
 
 #[derive(Clone)]
@@ -65,6 +67,8 @@ struct GithubPsk {
 lazy_static! {
     static ref PSKS: RwLock<Vec<GithubPsk>> = RwLock::new(Vec::new());
 }
+
+static SERVER_HOST: OnceLock<String> = OnceLock::new();
 
 #[derive(Copy, Clone, Debug)]
 enum GithubHookError {
@@ -182,8 +186,9 @@ async fn process_push_event(ctx: Arc<DbCtx>, owner: String, repo: String, event:
             let (job_id, commit_id) = ctx.new_job(remote_id, &sha, Some(pusher_email), repo_default_run_pref).unwrap();
             // at this point we have a commit id, record the ref..
             let _ = ctx.new_run(job_id, None).unwrap();
-
-            let notifiers = ci_lib_native::dbctx_ext::notifiers_by_repo(&ctx, repo_id).expect("can get notifiers");
+            
+            let host = SERVER_HOST.get().expect("server host was set");
+            let notifiers = ci_lib_native::dbctx_ext::notifiers_by_repo(&ctx, host, repo_id).expect("can get notifiers");
 
             for notifier in notifiers {
                 notifier.tell_pending_job(&ctx, repo_id, &sha, job_id).await.expect("can notify");
@@ -875,6 +880,8 @@ async fn main() {
     *psks = web_config.psks.clone();
     // drop write lock so we can read PSKS elsewhere WITHOUT deadlocking.
     std::mem::drop(psks);
+
+    SERVER_HOST.set(web_config.server_host.clone());
 
     let jobs_path = web_config.jobs_path.clone();
     let config_path = web_config.config_path.clone();

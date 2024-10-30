@@ -3,7 +3,7 @@ use crate::notifier::{RemoteNotifier, NotifierConfig};
 
 use ci_lib_core::dbctx::DbCtx;
 
-pub fn notifiers_by_repo(ctx: &DbCtx, repo_id: u64) -> Result<Vec<RemoteNotifier>, String> {
+pub fn notifiers_by_repo(ctx: &DbCtx, ci_host: &str, repo_id: u64) -> Result<Vec<RemoteNotifier>, String> {
     let remotes = ctx.remotes_by_repo(repo_id)?;
 
     let mut notifiers: Vec<RemoteNotifier> = Vec::new();
@@ -15,6 +15,7 @@ pub fn notifiers_by_repo(ctx: &DbCtx, repo_id: u64) -> Result<Vec<RemoteNotifier
                 notifier_path.push(&remote.notifier_config_path);
 
                 let notifier = RemoteNotifier {
+                    ci_host: ci_host.to_owned(),
                     remote_path: remote.remote_path,
                     notifier: NotifierConfig::github_from_file(&notifier_path)
                         .expect("can load notifier config")
@@ -26,6 +27,7 @@ pub fn notifiers_by_repo(ctx: &DbCtx, repo_id: u64) -> Result<Vec<RemoteNotifier
                 notifier_path.push(&remote.notifier_config_path);
 
                 let notifier = RemoteNotifier {
+                    ci_host: ci_host.to_owned(),
                     remote_path: remote.remote_path,
                     notifier: NotifierConfig::email_from_file(&notifier_path)
                         .expect("can load notifier config")

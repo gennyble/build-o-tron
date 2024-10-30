@@ -11,6 +11,7 @@ use std::path::Path;
 use ci_lib_core::dbctx::DbCtx;
 
 pub struct RemoteNotifier {
+    pub ci_host: String,
     pub remote_path: String,
     pub notifier: NotifierConfig,
 }
@@ -66,7 +67,7 @@ impl RemoteNotifier {
         self.tell_job_status(
             ctx,
             repo_id, sha, job_id,
-            "pending", "build is queued", &format!("https://{}/{}/{}", "ci.butactuallyin.space", &self.remote_path, sha)
+            "pending", "build is queued", &format!("https://{}/{}/{}", &self.ci_host, &self.remote_path, sha)
         ).await
     }
 
@@ -76,14 +77,14 @@ impl RemoteNotifier {
                 self.tell_job_status(
                     ctx,
                     repo_id, sha, job_id,
-                    "success", &status, &format!("https://{}/{}/{}", "ci.butactuallyin.space", &self.remote_path, sha)
+                    "success", &status, &format!("https://{}/{}/{}", &self.ci_host, &self.remote_path, sha)
                 ).await
             },
             Err(status) => {
                 self.tell_job_status(
                     ctx,
                     repo_id, sha, job_id,
-                    "failure", &status, &format!("https://{}/{}/{}", "ci.butactuallyin.space", &self.remote_path, sha)
+                    "failure", &status, &format!("https://{}/{}/{}", &self.ci_host, &self.remote_path, sha)
                 ).await
             }
         }
