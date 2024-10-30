@@ -11,7 +11,6 @@ use std::path::Path;
 use ci_lib_core::dbctx::DbCtx;
 
 pub struct RemoteNotifier {
-    pub ci_host: String,
     pub remote_path: String,
     pub notifier: NotifierConfig,
 }
@@ -20,10 +19,12 @@ pub struct RemoteNotifier {
 #[serde(untagged)]
 pub enum NotifierConfig {
     GitHub {
+        ci_server: String,
         token: String,
         webhook_token: String,
     },
     Email {
+        ci_server: String,
         username: String,
         password: String,
         mailserver: String,
@@ -60,6 +61,13 @@ impl NotifierConfig {
             Err(format!("config at {} doesn't look like an email config (but was otherwise valid?)", path.display()))
         }
     }
+
+    pub fn ci_server(&self) -> &str {
+        match self {
+            Self::Email { ci_server, .. } => &ci_server,
+            Self::GitHub { ci_server, .. } => &ci_server
+        }
+    }
 }
 
 impl RemoteNotifier {
@@ -67,7 +75,7 @@ impl RemoteNotifier {
         self.tell_job_status(
             ctx,
             repo_id, sha, job_id,
-            "pending", "build is queued", &format!("https://{}/{}/{}", &self.ci_host, &self.remote_path, sha)
+            "pending", "build is queued", &format!("https://{}/{}/{}", self.notifier.ci_server(), &self.remote_path, sha)
         ).await
     }
 
@@ -77,14 +85,14 @@ impl RemoteNotifier {
                 self.tell_job_status(
                     ctx,
                     repo_id, sha, job_id,
-                    "success", &status, &format!("https://{}/{}/{}", &self.ci_host, &self.remote_path, sha)
+                    "success", &status, &format!("https://{}/{}/{}", self.notifier.ci_server(), &self.remote_path, sha)
                 ).await
             },
             Err(status) => {
                 self.tell_job_status(
                     ctx,
                     repo_id, sha, job_id,
-                    "failure", &status, &format!("https://{}/{}/{}", &self.ci_host, &self.remote_path, sha)
+                    "failure", &status, &format!("https://{}/{}/{}", self.notifier.ci_server(), &self.remote_path, sha)
                 ).await
             }
         }
@@ -92,10 +100,10 @@ impl RemoteNotifier {
 
     pub async fn tell_job_status(&self, _ctx: &Arc<DbCtx>, _repo_id: u64, sha: &str, _job_id: u64, state: &str, desc: &str, target_url: &str) -> Result<(), String> {
         match &self.notifier {
-            NotifierConfig::GitHub { token, webhook_token } => {
+            NotifierConfig::GitHub { ci_server, token, webhook_token } => {
                 // TODO: should pool (probably in ctx?) to have an upper bound in concurrent
                 // connections.
-                let res = (crate::GithubApi { token, webhook_token }).post_status(&self.remote_path, sha, state, desc, target_url).await;
+                let res = (crate::GithubApi { ci_server, token, webhook_token }).post_status(&self.remote_path, sha, state, desc, target_url).await;
 
                 match res {
                     Ok(res) => {
@@ -110,7 +118,7 @@ impl RemoteNotifier {
                     }
                 }
             }
-            NotifierConfig::Email { username, password, mailserver, from, to } => {
+            NotifierConfig::Email { ci_server, username, password, mailserver, from, to } => {
                 eprintln!("[.] emailing {} for job {} via {}", state, &self.remote_path, mailserver);
 
                 let subject = format!("{}: job for {}", state, &self.remote_path);
