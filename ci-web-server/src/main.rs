@@ -40,7 +40,7 @@ use ci_lib_core::sql::{ArtifactRecord, Job, Run};
 
 use rusqlite::OptionalExtension;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct WebserverConfig {
     psks: Vec<GithubPsk>,
     jobs_path: PathBuf,
@@ -54,6 +54,7 @@ struct WebserverConfig {
 
 #[derive(Clone)]
 struct WebserverState {
+    server_host: String,
     jobs_path: PathBuf,
     artifact_path: PathBuf,
     dbctx: Arc<DbCtx>,
@@ -313,14 +314,16 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
 
     let deployed = false;
 
+    let server_host = &ctx.server_host;
+
     let mut head = String::new();
     head.push_str("<head>");
-    head.push_str(&format!("<title>ci.butactuallyin.space - {}</title>", repo_name));
+    head.push_str(&format!("<title>{server_host} - {}</title>", repo_name));
     let include_og_tags = true;
     if include_og_tags {
         head.push_str("\n");
         head.push_str(&format!("<meta property=\"og:type\" content=\"website\">\n"));
-        head.push_str(&format!("<meta property=\"og:site_name\" content=\"ci.butactuallyin.space\">\n"));
+        head.push_str(&format!("<meta property=\"og:site_name\" content=\"{server_host}\">\n"));
         head.push_str(&format!("<meta property=\"og:url\" content=\"/{}/{}/{}\">\n", &path.0, &path.1, &sha));
         head.push_str(&format!("<meta property=\"og:title\" contents=\"{}/{} commit {}\">", &path.0, &path.1, &short_sha));
         let build_og_description = format!("commit {} of {}/{}, {} after {}",
@@ -590,7 +593,7 @@ async fn handle_repo_summary(Path(path): Path<String>, summary_params: Query<Sum
 
     let mut response = String::new();
     response.push_str("<html>\n");
-    response.push_str(&format!("<title> ci.butactuallyin.space - {} </title>\n", repo_name));
+    response.push_str(&format!("<title> {} - {} </title>\n", ctx.server_host, repo_name));
     response.push_str("<style>\n");
     response.push_str(".build-table { font-family: monospace; border: 1px solid black; border-collapse: collapse; }\n");
     response.push_str(".row-item { padding-left: 4px; padding-right: 4px; border-right: 1px solid black; }\n");
@@ -751,7 +754,7 @@ async fn handle_repo_event(Path(path): Path<(String, String)>, headers: HeaderMa
 }
 
 
-async fn make_app_server(jobs_path: PathBuf, cfg_path: &PathBuf, artifact_path: PathBuf, db_path: &PathBuf) -> Router {
+async fn make_app_server(server_host: String, jobs_path: PathBuf, cfg_path: &PathBuf, artifact_path: PathBuf, db_path: &PathBuf) -> Router {
     /*
 
     // GET /hello/warp => 200 OK with body "Hello, warp!"
@@ -820,14 +823,17 @@ async fn make_app_server(jobs_path: PathBuf, cfg_path: &PathBuf, artifact_path: 
         .route("/", get(handle_ci_index))
         .fallback(fallback_get)
         .with_state(WebserverState {
+            server_host,
             jobs_path,
             artifact_path,
             dbctx: Arc::new(DbCtx::new(cfg_path, db_path))
         })
 }
 
-async fn bind_server(conf: serde_json::Value, jobs_path: PathBuf, config_path: PathBuf, artifact_path: PathBuf, db_path: PathBuf) -> std::io::Result<()> {
-    let server = make_app_server(jobs_path.clone(), &config_path, artifact_path, &db_path).await.into_make_service();
+async fn bind_server(conf: serde_json::Value, web_config: WebserverConfig) -> std::io::Result<()> {
+    let WebserverConfig { jobs_path, config_path, db_path, artifact_path, server_host, .. } = web_config;
+
+    let server = make_app_server(server_host, jobs_path, &config_path, artifact_path, &db_path).await.into_make_service();
     use serde_json::Value;
     match conf {
         Value::String(address) => {
@@ -885,11 +891,11 @@ async fn main() {
     let jobs_path = web_config.jobs_path.clone();
     let config_path = web_config.config_path.clone();
     let db_path = web_config.db_path.clone();
-    if let Some(addr_conf) = web_config.debug_addr.as_ref() {
-        spawn(bind_server(addr_conf.clone(), jobs_path.clone(), config_path.clone(), web_config.artifact_path.clone(), db_path.clone()));
+    if let Some(addr) = web_config.debug_addr.clone() {
+        spawn(bind_server(addr, web_config.clone()));
     }
-    if let Some(addr_conf) = web_config.server_addr.as_ref() {
-        spawn(bind_server(addr_conf.clone(), jobs_path.clone(), config_path.clone(), web_config.artifact_path.clone(), db_path.clone()));
+    if let Some(addr) = web_config.server_addr.clone() {
+        spawn(bind_server(addr, web_config.clone()));
     }
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
