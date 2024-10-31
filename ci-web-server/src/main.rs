@@ -46,6 +46,7 @@ struct WebserverConfig {
     jobs_path: PathBuf,
     config_path: PathBuf,
     db_path: PathBuf,
+    artifact_path: PathBuf,
     debug_addr: Option<serde_json::Value>,
     server_addr: Option<serde_json::Value>,
     server_host: String 
@@ -54,6 +55,7 @@ struct WebserverConfig {
 #[derive(Clone)]
 struct WebserverState {
     jobs_path: PathBuf,
+    artifact_path: PathBuf,
     dbctx: Arc<DbCtx>,
 }
 
@@ -351,11 +353,13 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
     let recent_artifacts: Vec<ArtifactRecord> = artifacts.iter().filter(|artifact| diff_times(complete_time, artifact.completed_time) <= 60_000).cloned().collect();
     let old_artifacts: Vec<ArtifactRecord> = artifacts.iter().filter(|artifact| diff_times(complete_time, artifact.completed_time) > 60_000).cloned().collect();
 
+    let artifact_path = ctx.artifact_path.to_string_lossy();
+
     for artifact in old_artifacts.iter() {
         let created_time_str = Utc.timestamp_millis_opt(artifact.created_time as i64).unwrap().to_rfc2822();
         artifacts_fragment.push_str(&format!("<div><pre style='display:inline;'>{}</pre> step: <pre style='display:inline;'>{}</pre></div>\n", created_time_str, &artifact.name));
         let duration_str = ci_lib_web::duration_as_human_string(artifact.completed_time.unwrap_or_else(ci_lib_core::now_ms) - artifact.created_time);
-        let size_str = (std::fs::metadata(&format!("./artifacts/{}/{}", artifact.run_id, artifact.id)).expect("metadata exists").len() / 1024).to_string();
+        let size_str = (std::fs::metadata(&format!("{artifact_path}/{}/{}", artifact.run_id, artifact.id)).expect("metadata exists").len() / 1024).to_string();
         artifacts_fragment.push_str(&format!("<pre>  {}kb in {} </pre>\n", size_str, duration_str));
     }
 
@@ -364,11 +368,11 @@ async fn handle_commit_status(Path(path): Path<(String, String, String)>, State(
         artifacts_fragment.push_str(&format!("<div><pre style='display:inline;'>{}</pre> step: <pre style='display:inline;'>{}</pre></div>\n", created_time_str, &artifact.name));
         if debug_info {
             artifacts_fragment.push_str("<pre>");
-            artifacts_fragment.push_str(&std::fs::read_to_string(format!("./artifacts/{}/{}", artifact.run_id, artifact.id)).unwrap());
+            artifacts_fragment.push_str(&std::fs::read_to_string(format!("{artifact_path}/{}/{}", artifact.run_id, artifact.id)).unwrap());
             artifacts_fragment.push_str("</pre>\n");
         } else {
             let duration_str = ci_lib_web::duration_as_human_string(artifact.completed_time.unwrap_or_else(ci_lib_core::now_ms) - artifact.created_time);
-            let size_str = std::fs::metadata(&format!("./artifacts/{}/{}", artifact.run_id, artifact.id)).map(|md| {
+            let size_str = std::fs::metadata(&format!("{artifact_path}/{}/{}", artifact.run_id, artifact.id)).map(|md| {
                 (md.len() / 1024).to_string()
             }).unwrap_or_else(|e| format!("[{}]", e));
             artifacts_fragment.push_str(&format!("<pre>  {}kb in {} </pre>\n", size_str, duration_str));
@@ -747,7 +751,7 @@ async fn handle_repo_event(Path(path): Path<(String, String)>, headers: HeaderMa
 }
 
 
-async fn make_app_server(jobs_path: PathBuf, cfg_path: &PathBuf, db_path: &PathBuf) -> Router {
+async fn make_app_server(jobs_path: PathBuf, cfg_path: &PathBuf, artifact_path: PathBuf, db_path: &PathBuf) -> Router {
     /*
 
     // GET /hello/warp => 200 OK with body "Hello, warp!"
@@ -817,12 +821,13 @@ async fn make_app_server(jobs_path: PathBuf, cfg_path: &PathBuf, db_path: &PathB
         .fallback(fallback_get)
         .with_state(WebserverState {
             jobs_path,
+            artifact_path,
             dbctx: Arc::new(DbCtx::new(cfg_path, db_path))
         })
 }
 
-async fn bind_server(conf: serde_json::Value, jobs_path: PathBuf, config_path: PathBuf, db_path: PathBuf) -> std::io::Result<()> {
-    let server = make_app_server(jobs_path.clone(), &config_path, &db_path).await.into_make_service();
+async fn bind_server(conf: serde_json::Value, jobs_path: PathBuf, config_path: PathBuf, artifact_path: PathBuf, db_path: PathBuf) -> std::io::Result<()> {
+    let server = make_app_server(jobs_path.clone(), &config_path, artifact_path, &db_path).await.into_make_service();
     use serde_json::Value;
     match conf {
         Value::String(address) => {
@@ -881,10 +886,10 @@ async fn main() {
     let config_path = web_config.config_path.clone();
     let db_path = web_config.db_path.clone();
     if let Some(addr_conf) = web_config.debug_addr.as_ref() {
-        spawn(bind_server(addr_conf.clone(), jobs_path.clone(), config_path.clone(), db_path.clone()));
+        spawn(bind_server(addr_conf.clone(), jobs_path.clone(), config_path.clone(), web_config.artifact_path.clone(), db_path.clone()));
     }
     if let Some(addr_conf) = web_config.server_addr.as_ref() {
-        spawn(bind_server(addr_conf.clone(), jobs_path.clone(), config_path.clone(), db_path.clone()));
+        spawn(bind_server(addr_conf.clone(), jobs_path.clone(), config_path.clone(), web_config.artifact_path.clone(), db_path.clone()));
     }
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
